@@ -13,7 +13,7 @@ mod types;
 mod test;
 
 use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env, Symbol, Vec};
-use types::{Invoice, InvoiceStatus, Payment, AuditEntry};
+use types::{Invoice, InvoiceStatus, Payment, AuditEntry, SubscriptionParams};
 
 // ---------------------------------------------------------------------------
 // Storage helpers
@@ -45,6 +45,11 @@ fn save_invoice(env: &Env, id: u64, invoice: &Invoice) {
 /// Storage key for the audit log: (symbol, invoice_id).
 fn audit_log_key(id: u64) -> (Symbol, u64) {
     (symbol_short!("log"), id)
+}
+
+/// Storage key for subscription params: (symbol, parent_invoice_id).
+fn subscription_params_key(id: u64) -> (Symbol, u64) {
+    (symbol_short!("sub"), id)
 }
 
 /// Append an audit entry to the log for an invoice.
@@ -143,6 +148,68 @@ impl SplitContract {
 
         save_invoice(&env, id, &invoice);
         events::invoice_created(&env, id, &creator, total);
+
+        id
+    }
+
+    /// Create a subscription chain of invoices for recurring monthly billing.
+    ///
+    /// Creates the first invoice immediately and schedules subsequent invoices
+    /// to be created automatically on each release.
+    ///
+    /// # Arguments
+    /// * `creator`    – address that owns the subscription (must authorise)
+    /// * `recipients` – ordered list of recipient addresses
+    /// * `amounts`    – amount owed to each recipient (parallel to `recipients`)
+    /// * `token`      – USDC token contract address
+    /// * `months`     – number of months (capped at 12)
+    ///
+    /// # Returns
+    /// The ID of the first invoice created.
+    pub fn create_subscription(
+        env: Env,
+        creator: Address,
+        recipients: Vec<Address>,
+        amounts: Vec<i128>,
+        token: Address,
+        months: u32,
+    ) -> u64 {
+        creator.require_auth();
+
+        assert!(
+            recipients.len() == amounts.len(),
+            "recipients and amounts length mismatch"
+        );
+        assert!(!recipients.is_empty(), "must have at least one recipient");
+        assert!(months > 0 && months <= 12, "months must be between 1 and 12");
+
+        for amt in amounts.iter() {
+            assert!(amt > 0, "amounts must be positive");
+        }
+
+        // Create first invoice with deadline 30 days in future (in seconds)
+        let deadline = env.ledger().timestamp() + 30 * 24 * 60 * 60;
+        let id = Self::create_invoice(
+            env.clone(),
+            creator.clone(),
+            recipients.clone(),
+            amounts.clone(),
+            token.clone(),
+            deadline,
+        );
+
+        // Store subscription params if more invoices needed
+        if months > 1 {
+            let params = SubscriptionParams {
+                creator: creator.clone(),
+                recipients: recipients.clone(),
+                amounts: amounts.clone(),
+                token: token.clone(),
+            };
+            env.storage()
+                .persistent()
+                .set(&subscription_params_key(id), &params);
+        }
 
         id
     }
@@ -322,6 +389,7 @@ impl SplitContract {
     // -----------------------------------------------------------------------
 
     /// Route funds to all recipients and mark the invoice as released.
+    /// Also creates the next invoice in a subscription chain if params exist.
     fn _release(env: &Env, invoice_id: u64, invoice: &mut Invoice, actor: &Address) {
         let token_client = token::Client::new(env, &invoice.token);
 
@@ -333,5 +401,28 @@ impl SplitContract {
         save_invoice(env, invoice_id, invoice);
         append_audit_entry(env, invoice_id, symbol_short!("release"), actor);
         events::invoice_released(env, invoice_id, &invoice.recipients);
+
+        // Check for subscription params and create next invoice if exists
+        if let Some(params) = env
+            .storage()
+            .persistent()
+            .get::<_, SubscriptionParams>(&subscription_params_key(invoice_id))
+        {
+            // Create next invoice with deadline 30 days after current release
+            let next_deadline = env.ledger().timestamp() + 30 * 24 * 60 * 60;
+            let next_id = Self::create_invoice(
+                env.clone(),
+                params.creator.clone(),
+                params.recipients.clone(),
+                params.amounts.clone(),
+                params.token.clone(),
+                next_deadline,
+            );
+
+            // Remove the params storage key (subscription complete)
+            env.storage()
+                .persistent()
+                .remove(&subscription_params_key(invoice_id));
+        }
     }
 }

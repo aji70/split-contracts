@@ -36,6 +36,20 @@ pub struct AuditEntry {
     pub timestamp: u64,
 }
 
+/// Parameters for creating a subscription invoice chain.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct SubscriptionParams {
+    /// Address that created the subscription.
+    pub creator: Address,
+    /// Ordered list of recipient addresses.
+    pub recipients: Vec<Address>,
+    /// Amounts owed to each recipient (parallel to `recipients`).
+    pub amounts: Vec<i128>,
+    /// USDC token contract address.
+    pub token: Address,
+}
+
 /// An on-chain invoice splitting payment among multiple recipients.
 #[contracttype]
 #[derive(Clone, Debug)]

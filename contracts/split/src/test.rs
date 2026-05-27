@@ -272,7 +272,7 @@ fn test_audit_log() {
 
     let id = c.create_invoice(&creator, &recipients, &amounts, &token_id, &9_999_u64);
 
-    // Perform 3 actions: pay, release, cancel_invoice
+    // Perform action: pay (auto-release)
     c.pay(&payer, &id, &200_i128);
 
     let invoice = c.get_invoice(&id);
@@ -337,4 +337,42 @@ fn test_audit_log_with_extend() {
     assert_eq!(log.len(), 1);
     assert_eq!(log.get_unchecked(0).action, symbol_short!("extend"));
     assert_eq!(log.get_unchecked(0).actor, creator);
+}
+
+#[test]
+fn test_create_subscription() {
+    let (env, contract_id, token_id) = setup();
+    let c = client(&env, &contract_id);
+    let tk = token_client(&env, &token_id);
+    let stellar_asset = StellarAssetClient::new(&env, &token_id);
+
+    let creator = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    stellar_asset.mint(&payer, &500);
+
+    env.ledger().set_timestamp(1_000);
+
+    let mut recipients = Vec::new(&env);
+    recipients.push_back(recipient.clone());
+    let mut amounts = Vec::new(&env);
+    amounts.push_back(200_i128);
+
+    // Create a 3-month subscription
+    let id = c.create_subscription(&creator, &recipients, &amounts, &token_id, &3_u32);
+    assert_eq!(id, 1);
+
+    // Pay and auto-release first invoice
+    c.pay(&payer, &id, &200_i128);
+
+    let invoice = c.get_invoice(&id);
+    assert_eq!(invoice.status, InvoiceStatus::Released);
+
+    // Second invoice should be created automatically (30 days after release)
+    let second_invoice = c.get_invoice(&2);
+    assert_eq!(second_invoice.status, InvoiceStatus::Pending);
+
+    // Recipient should have received 200 from first invoice
+    assert_eq!(tk.balance(&recipient), 200);
 }
