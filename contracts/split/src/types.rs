@@ -28,6 +28,8 @@ pub struct Payment {
 pub struct Invoice {
     /// Address that created the invoice.
     pub creator: Address,
+    /// Optional co-creators who share creator-gated permissions.
+    pub co_creators: Vec<Address>,
     /// Ordered list of recipient addresses.
     pub recipients: Vec<Address>,
     /// Amounts owed to each recipient (parallel to `recipients`).
@@ -42,4 +44,6 @@ pub struct Invoice {
     pub status: InvoiceStatus,
     /// All payments made toward this invoice.
     pub payments: Vec<Payment>,
+    /// Whether payers can withdraw their contribution before the deadline.
+    pub allow_early_withdrawal: bool,
 }
