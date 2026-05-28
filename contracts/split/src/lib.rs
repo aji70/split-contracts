@@ -169,6 +169,7 @@ impl SplitContract {
         env.storage().persistent().set(&counter_key(), &id);
 
         let total: i128 = amounts.iter().sum();
+        let original_duration = deadline - now;
 
         // Deposit bonus pool from creator if non-zero.
         if bonus_pool > 0 {
@@ -249,6 +250,8 @@ impl SplitContract {
     pub fn pay(env: Env, payer: Address, invoice_id: u64, amount: i128) {
         require_not_paused(&env);
         payer.require_auth();
+        Self::_pay(&env, &payer, invoice_id, amount);
+    }
 
         let mut invoice = load_invoice(&env, invoice_id);
 
