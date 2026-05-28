@@ -42,4 +42,10 @@ pub struct Invoice {
     pub status: InvoiceStatus,
     /// All payments made toward this invoice.
     pub payments: Vec<Payment>,
+    /// Optional vesting duration in seconds. When set, recipients claim gradually.
+    pub drip_duration: Option<u64>,
+    /// Timestamp when the invoice was released (set by `_release` when drip is active).
+    pub release_timestamp: Option<u64>,
+    /// Amount already claimed by each recipient (parallel to `recipients`).
+    pub claimed: Vec<i128>,
 }
