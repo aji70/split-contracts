@@ -1,7 +1,33 @@
+# Build output
 target/
-Cargo.lock
 *.wasm
+
+# Cargo lock (library crates don't commit this)
+Cargo.lock
+
+# Environment files
 .env
 .env.local
+.env.*.local
+
+# OS files
 .DS_Store
 Thumbs.db
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test snapshots
+**/__snapshots__/
+*.snap
+
+# Stellar CLI
+.stellar/
+identity/
+
+# Logs
+*.log
