@@ -1,10 +1,10 @@
-use soroban_sdk::{symbol_short, Address, Env, Vec};
+use soroban_sdk::{symbol_short, Address, Bytes, Env, Vec};
 
 /// Emitted when a new invoice is created.
-pub fn invoice_created(env: &Env, invoice_id: u64, creator: &Address, total: i128) {
+pub fn invoice_created(env: &Env, invoice_id: u64, creator: &Address, total: i128, metadata: &Option<Bytes>) {
     env.events().publish(
         (symbol_short!("inv_crt"), invoice_id),
-        (creator.clone(), total),
+        (creator.clone(), total, metadata.clone()),
     );
 }
 
