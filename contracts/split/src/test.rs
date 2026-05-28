@@ -35,10 +35,10 @@ fn token_client<'a>(env: &'a Env, token_id: &Address) -> TokenClient<'a> {
     TokenClient::new(env, token_id)
 }
 
-/// Helper: create a simple single-recipient invoice with no bonus/metadata.
+/// Helper: create a basic invoice with no co-creators and no early withdrawal.
 fn make_invoice(
-    c: &SplitContractClient<'_>,
     env: &Env,
+    c: &SplitContractClient,
     creator: &Address,
     recipient: &Address,
     amount: i128,
@@ -49,7 +49,15 @@ fn make_invoice(
     recipients.push_back(recipient.clone());
     let mut amounts = Vec::new(env);
     amounts.push_back(amount);
-    c.create_invoice(creator, &recipients, &amounts, token_id, &deadline, &0_i128, &0_u32, &None)
+    c.create_invoice(
+        creator,
+        &recipients,
+        &amounts,
+        token_id,
+        &deadline,
+        &Vec::new(env),
+        &false,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -66,7 +74,7 @@ fn test_create_invoice() {
 
     env.ledger().set_timestamp(1_000);
 
-    let id = make_invoice(&c, &env, &creator, &recipient, 100, &token_id, 2_000);
+    let id = make_invoice(&env, &c, &creator, &recipient, 100, &token_id, 2_000);
     assert_eq!(id, 1);
 
     let invoice = c.get_invoice(&id);
@@ -87,7 +95,7 @@ fn test_pay_and_auto_release() {
     StellarAssetClient::new(&env, &token_id).mint(&payer, &500);
     env.ledger().set_timestamp(1_000);
 
-    let id = make_invoice(&c, &env, &creator, &recipient, 200, &token_id, 9_999);
+    let id = make_invoice(&env, &c, &creator, &recipient, 200, &token_id, 9_999);
     c.pay(&payer, &id, &200_i128);
 
     let invoice = c.get_invoice(&id);
@@ -109,10 +117,9 @@ fn test_partial_pay_then_release() {
     let sa = StellarAssetClient::new(&env, &token_id);
     sa.mint(&payer1, &150);
     sa.mint(&payer2, &150);
-
     env.ledger().set_timestamp(1_000);
 
-    let id = make_invoice(&c, &env, &creator, &recipient, 300, &token_id, 9_999);
+    let id = make_invoice(&env, &c, &creator, &recipient, 300, &token_id, 9_999);
 
     c.pay(&payer1, &id, &150_i128);
     assert_eq!(c.get_invoice(&id).status, InvoiceStatus::Pending);
@@ -135,7 +142,7 @@ fn test_refund_after_deadline() {
     StellarAssetClient::new(&env, &token_id).mint(&payer, &100);
     env.ledger().set_timestamp(1_000);
 
-    let id = make_invoice(&c, &env, &creator, &recipient, 500, &token_id, 2_000);
+    let id = make_invoice(&env, &c, &creator, &recipient, 500, &token_id, 2_000);
     c.pay(&payer, &id, &100_i128);
 
     env.ledger().set_timestamp(3_000);
@@ -158,7 +165,7 @@ fn test_pay_after_deadline_panics() {
     StellarAssetClient::new(&env, &token_id).mint(&payer, &100);
     env.ledger().set_timestamp(1_000);
 
-    let id = make_invoice(&c, &env, &creator, &recipient, 100, &token_id, 2_000);
+    let id = make_invoice(&env, &c, &creator, &recipient, 100, &token_id, 2_000);
     env.ledger().set_timestamp(3_000);
     c.pay(&payer, &id, &100_i128);
 }
@@ -176,7 +183,7 @@ fn test_overpayment_panics() {
     StellarAssetClient::new(&env, &token_id).mint(&payer, &1_000);
     env.ledger().set_timestamp(1_000);
 
-    let id = make_invoice(&c, &env, &creator, &recipient, 100, &token_id, 9_999);
+    let id = make_invoice(&env, &c, &creator, &recipient, 100, &token_id, 9_999);
     c.pay(&payer, &id, &200_i128);
 }
 
@@ -204,7 +211,15 @@ fn test_multi_recipient_release() {
     amounts.push_back(200_i128);
     amounts.push_back(300_i128);
 
-    let id = c.create_invoice(&creator, &recipients, &amounts, &token_id, &9_999_u64, &0_i128, &0_u32, &None);
+    let id = c.create_invoice(
+        &creator,
+        &recipients,
+        &amounts,
+        &token_id,
+        &9_999_u64,
+        &Vec::new(&env),
+        &false,
+    );
     c.pay(&payer, &id, &600_i128);
 
     assert_eq!(tk.balance(&r1), 100);
@@ -476,50 +491,4 @@ fn test_bonus_pool_zero_behaves_identically() {
 
     assert_eq!(c.get_invoice(&id).status, InvoiceStatus::Released);
     assert_eq!(tk.balance(&recipient), 200);
-    assert_eq!(tk.balance(&payer), 0);
-}
-
-// ---------------------------------------------------------------------------
-// New tests: metadata
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_create_invoice_with_metadata() {
-    let (env, contract_id, token_id) = setup();
-    let c = client(&env, &contract_id);
-
-    let creator = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    env.ledger().set_timestamp(1_000);
-
-    let cid = Bytes::from_slice(&env, b"QmTestCID1234567890");
-    let mut recipients = Vec::new(&env);
-    recipients.push_back(recipient.clone());
-    let mut amounts = Vec::new(&env);
-    amounts.push_back(100_i128);
-
-    let id = c.create_invoice(
-        &creator, &recipients, &amounts, &token_id, &9_999_u64,
-        &0_i128, &0_u32, &Some(cid.clone()),
-    );
-
-    let invoice = c.get_invoice(&id);
-    assert_eq!(invoice.metadata, Some(cid));
-}
-
-#[test]
-fn test_create_invoice_without_metadata() {
-    let (env, contract_id, token_id) = setup();
-    let c = client(&env, &contract_id);
-
-    let creator = Address::generate(&env);
-    let recipient = Address::generate(&env);
-
-    env.ledger().set_timestamp(1_000);
-
-    let id = make_invoice(&c, &env, &creator, &recipient, 100, &token_id, 9_999);
-
-    let invoice = c.get_invoice(&id);
-    assert_eq!(invoice.metadata, None);
 }

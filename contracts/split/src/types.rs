@@ -72,6 +72,8 @@ pub struct CompletionProof {
 pub struct Invoice {
     /// Address that created the invoice.
     pub creator: Address,
+    /// Optional co-creators who share creator-gated permissions.
+    pub co_creators: Vec<Address>,
     /// Ordered list of recipient addresses.
     pub recipients: Vec<Address>,
     /// Amounts owed to each recipient (parallel to `recipients`).
@@ -86,10 +88,10 @@ pub struct Invoice {
     pub status: InvoiceStatus,
     /// All payments made toward this invoice.
     pub payments: Vec<Payment>,
-    /// Optional bonus pool deposited by creator, distributed to first `bonus_max_payers` unique payers.
-    pub bonus_pool: i128,
-    /// Number of early payers eligible for the bonus split.
-    pub bonus_max_payers: u32,
-    /// Optional IPFS CID or arbitrary metadata bytes.
-    pub metadata: Option<Bytes>,
+    /// Optional vesting duration in seconds. When set, recipients claim gradually.
+    pub drip_duration: Option<u64>,
+    /// Timestamp when the invoice was released (set by `_release` when drip is active).
+    pub release_timestamp: Option<u64>,
+    /// Amount already claimed by each recipient (parallel to `recipients`).
+    pub claimed: Vec<i128>,
 }
