@@ -29,6 +29,15 @@ fn paused_key() -> Symbol {
 fn fee_bps_key() -> Symbol {
     symbol_short!("fee_bps")
 }
+fn creation_fee_key() -> Symbol {
+    symbol_short!("crt_fee")
+}
+fn treasury_key() -> Symbol {
+    symbol_short!("treasury")
+}
+fn usdc_token_key() -> Symbol {
+    symbol_short!("usdc_tok")
+}
 fn counter_key() -> Symbol {
     symbol_short!("counter")
 }
@@ -154,13 +163,17 @@ pub struct SplitContract;
 
 #[contractimpl]
 impl SplitContract {
-    /// Set the contract admin. Can only be called once.
-    pub fn initialize(env: Env, admin: Address) {
+    /// Set the contract admin, creation fee, treasury, and USDC token. Can only be called once.
+    pub fn initialize(env: Env, admin: Address, creation_fee: i128, treasury: Address, usdc_token: Address) {
         assert!(
             !env.storage().instance().has(&admin_key()),
             "already initialized"
         );
+        assert!(creation_fee >= 0, "creation_fee must be non-negative");
         env.storage().instance().set(&admin_key(), &admin);
+        env.storage().instance().set(&creation_fee_key(), &creation_fee);
+        env.storage().instance().set(&treasury_key(), &treasury);
+        env.storage().instance().set(&usdc_token_key(), &usdc_token);
         env.storage().persistent().set(&paused_key(), &false);
     }
 
@@ -185,6 +198,43 @@ impl SplitContract {
     pub fn unpause(env: Env, admin: Address) {
         require_admin(&env, &admin);
         env.storage().persistent().set(&paused_key(), &false);
+    }
+
+    /// Update the creation fee. Requires admin auth.
+    pub fn set_creation_fee(env: Env, admin: Address, creation_fee: i128) {
+        require_admin(&env, &admin);
+        assert!(creation_fee >= 0, "creation_fee must be non-negative");
+        env.storage().instance().set(&creation_fee_key(), &creation_fee);
+    }
+
+    /// Update the treasury address. Requires admin auth.
+    pub fn set_treasury(env: Env, admin: Address, treasury: Address) {
+        require_admin(&env, &admin);
+        env.storage().instance().set(&treasury_key(), &treasury);
+    }
+
+    /// Return the current creation fee.
+    pub fn get_creation_fee(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&creation_fee_key())
+            .unwrap_or(0)
+    }
+
+    /// Return the treasury address.
+    pub fn get_treasury(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&treasury_key())
+            .expect("treasury not set")
+    }
+
+    /// Return the USDC token address.
+    pub fn get_usdc_token(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&usdc_token_key())
+            .expect("usdc token not set")
     }
 
     // -----------------------------------------------------------------------
@@ -298,11 +348,25 @@ impl SplitContract {
             assert!(total_bps == 10_000, "tranches must sum to 10000 basis points");
         }
 
-        if !co_signers.is_empty() {
-            assert!(
-                required_signatures <= co_signers.len() as u32,
-                "required_signatures exceeds number of co-signers"
-            );
+        // Charge configurable creation fee in USDC.
+        let creation_fee: i128 = env
+            .storage()
+            .instance()
+            .get(&creation_fee_key())
+            .unwrap_or(0);
+        if creation_fee > 0 {
+            let usdc_token: Address = env
+                .storage()
+                .instance()
+                .get(&usdc_token_key())
+                .expect("usdc token not set");
+            let treasury: Address = env
+                .storage()
+                .instance()
+                .get(&treasury_key())
+                .expect("treasury not set");
+            let usdc_client = token::Client::new(env, &usdc_token);
+            usdc_client.transfer(&creator, &treasury, &creation_fee);
         }
 
         let id: u64 = env
