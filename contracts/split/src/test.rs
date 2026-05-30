@@ -471,7 +471,8 @@ fn test_pause_blocks_pay() {
     StellarAssetClient::new(&env, &token_id).mint(&payer, &500);
     env.ledger().set_timestamp(1_000);
 
-    c.initialize(&admin);
+    let treasury = Address::generate(&env);
+    c.initialize(&admin, &0_i128, &treasury, &token_id);
     let id = make_invoice(&env, &c, &creator, &recipient, 200, &token_id, 9_999);
     c.pause(&admin);
 
@@ -491,7 +492,8 @@ fn test_unpause_restores_pay() {
     StellarAssetClient::new(&env, &token_id).mint(&payer, &500);
     env.ledger().set_timestamp(1_000);
 
-    c.initialize(&admin);
+    let treasury = Address::generate(&env);
+    c.initialize(&admin, &0_i128, &treasury, &token_id);
     let id = make_invoice(&env, &c, &creator, &recipient, 200, &token_id, 9_999);
 
     c.pause(&admin);
@@ -512,7 +514,8 @@ fn test_get_invoice_works_while_paused() {
 
     env.ledger().set_timestamp(1_000);
 
-    c.initialize(&admin);
+    let treasury = Address::generate(&env);
+    c.initialize(&admin, &0_i128, &treasury, &token_id);
     let id = make_invoice(&env, &c, &creator, &recipient, 200, &token_id, 9_999);
     c.pause(&admin);
 
@@ -1092,4 +1095,134 @@ fn test_reputation_is_per_address() {
     // Unrelated address has zero reputation.
     let other = Address::generate(&env);
     assert_eq!(c.get_reputation(&other), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Creation fee
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_creation_fee_charged_to_treasury() {
+    let (env, contract_id, token_id) = setup();
+    let c = client(&env, &contract_id);
+    let tk = token_client(&env, &token_id);
+
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let sa = StellarAssetClient::new(&env, &token_id);
+    sa.mint(&creator, &1_000);
+
+    env.ledger().set_timestamp(1_000);
+
+    c.initialize(&admin, &50_i128, &treasury, &token_id);
+
+    assert_eq!(c.get_creation_fee(), 50);
+    assert_eq!(c.get_treasury(), treasury);
+    assert_eq!(c.get_usdc_token(), token_id);
+
+    let id = make_invoice(&env, &c, &creator, &recipient, 200, &token_id, 9_999);
+
+    // Treasury received 50 USDC creation fee.
+    assert_eq!(tk.balance(&treasury), 50);
+    // Creator paid 50 USDC fee; invoice amount stays in creator wallet until payers pay.
+    assert_eq!(tk.balance(&creator), 950);
+    assert_eq!(c.get_invoice(&id).status, InvoiceStatus::Pending);
+}
+
+#[test]
+fn test_creation_fee_zero_by_default() {
+    let (env, contract_id, token_id) = setup();
+    let c = client(&env, &contract_id);
+    let tk = token_client(&env, &token_id);
+
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let sa = StellarAssetClient::new(&env, &token_id);
+    sa.mint(&creator, &1_000);
+
+    env.ledger().set_timestamp(1_000);
+
+    c.initialize(&admin, &0_i128, &treasury, &token_id);
+
+    let id = make_invoice(&env, &c, &creator, &recipient, 200, &token_id, 9_999);
+
+    // No fee deducted when creation_fee is 0.
+    assert_eq!(tk.balance(&treasury), 0);
+    assert_eq!(tk.balance(&creator), 1000);
+    assert_eq!(c.get_invoice(&id).status, InvoiceStatus::Pending);
+}
+
+#[test]
+fn test_set_creation_fee_updates_fee() {
+    let (env, contract_id, token_id) = setup();
+    let c = client(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    c.initialize(&admin, &10_i128, &treasury, &token_id);
+    assert_eq!(c.get_creation_fee(), 10);
+
+    c.set_creation_fee(&admin, &25_i128);
+    assert_eq!(c.get_creation_fee(), 25);
+}
+
+#[test]
+fn test_set_treasury_updates_treasury() {
+    let (env, contract_id, token_id) = setup();
+    let c = client(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury1 = Address::generate(&env);
+    let treasury2 = Address::generate(&env);
+
+    c.initialize(&admin, &10_i128, &treasury1, &token_id);
+    assert_eq!(c.get_treasury(), treasury1);
+
+    c.set_treasury(&admin, &treasury2);
+    assert_eq!(c.get_treasury(), treasury2);
+}
+
+#[test]
+fn test_creation_fee_charged_per_invoice_in_batch() {
+    let (env, contract_id, token_id) = setup();
+    let c = client(&env, &contract_id);
+    let tk = token_client(&env, &token_id);
+
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let sa = StellarAssetClient::new(&env, &token_id);
+    sa.mint(&creator, &1_000);
+
+    env.ledger().set_timestamp(1_000);
+
+    c.initialize(&admin, &10_i128, &treasury, &token_id);
+
+    // create_batch creates 2 invoices, each should incur a 10 unit fee.
+    let mut recipients = Vec::new(&env);
+    recipients.push_back(recipient.clone());
+    let mut amounts = Vec::new(&env);
+    amounts.push_back(100_i128);
+    let params = types::CreateInvoiceParams {
+        recipients,
+        amounts,
+        token: token_id.clone(),
+        deadline: 9_999,
+    };
+    let mut invoices = Vec::new(&env);
+    invoices.push_back(params.clone());
+    invoices.push_back(params);
+    c.create_batch(&creator, &invoices);
+
+    // 2 invoices x 10 fee = 20 total.
+    assert_eq!(tk.balance(&treasury), 20);
 }
